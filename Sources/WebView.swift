@@ -110,6 +110,15 @@ struct WebViewContainer: UIViewRepresentable {
             topViewController()?.present(alert, animated: true)
         }
 
+        // 网页申请摄像头/麦克风 → 弹系统权限框并放行（iOS 15+）
+        func webView(_ webView: WKWebView,
+                     requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo,
+                     type: WKMediaCaptureType,
+                     decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            decisionHandler(.prompt) // 触发系统 麦克风/摄像头 权限弹窗（首次）
+        }
+
         private func topViewController() -> UIViewController? {
             var top = UIApplication.shared.connectedScenes
                 .compactMap { ($0 as? UIWindowScene)?.keyWindow?.rootViewController }
