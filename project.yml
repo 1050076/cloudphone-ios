@@ -18,6 +18,9 @@ targets:
         CFBundleDisplayName: CloudPhone
         CFBundleShortVersionString: "1.0.0"
         CFBundleVersion: "1"
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: true
+        UIRequiresFullScreen: true
         NSMicrophoneUsageDescription: CloudPhone 需要使用麦克风进行语音通话
         NSCameraUsageDescription: CloudPhone 需要使用摄像头进行视频画面传输
         UILaunchScreen: {}

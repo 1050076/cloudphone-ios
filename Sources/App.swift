@@ -19,7 +19,7 @@ struct ContentView: View {
 
     var body: some View {
         WebViewContainer(startURL: kStartURL, reloadToken: reloadToken)
-            .ignoresSafeArea(.container, edges: .bottom)
+            .ignoresSafeArea()                       // 全屏：上下安全区都铺满
             .background(Color.black.ignoresSafeArea())
             .overlay(alignment: .topTrailing) {
                 // 轻量刷新按钮：滑到底部也不会丢
