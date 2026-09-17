@@ -50,8 +50,13 @@ struct WebViewContainer: UIViewRepresentable {
         webView.scrollView.isScrollEnabled = false       // 页面自己管理滚动
         // 双指/双击缩放手势关掉
         webView.scrollView.pinchGestureRecognizer?.isEnabled = false
-        for g in webView.subviews.compactMap({ $0.gestureRecognizers }).flatMap({ $0 }) {
-            if g is UIPinchGestureRecognizer || g is UIDoubleTapGestureRecognizer { g.isEnabled = false }
+        for v in webView.subviews {
+            for g in v.gestureRecognizers ?? [] {
+                if let tap = g as? UITapGestureRecognizer, tap.numberOfTapsRequired >= 2 {
+                    tap.isEnabled = false
+                }
+                if g is UIPinchGestureRecognizer { g.isEnabled = false }
+            }
         }
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
