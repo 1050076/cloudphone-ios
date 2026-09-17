@@ -17,14 +17,20 @@ struct WebViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        // 捕获页面 console 输出，转发到原生调试面板
+        // 捕获页面 console 输出 + WebSocket 事件，转发到原生调试面板
         let consoleHook = """
         (function () {
             var fmt = function (a) {
                 var s = [];
                 for (var i = 0; i < a.length; i++) {
                     var v = a[i];
-                    try { s.push(typeof v === 'object' ? JSON.stringify(v) : String(v)); } catch (e) { s.push('[object]'); }
+                    try {
+                        if (v instanceof Error) { s.push(v.name + ': ' + v.message + ' | ' + (v.stack || '').split('\\n').slice(0, 3).join(' <= ')); }
+                        else if (typeof v === 'object' && v !== null) {
+                            var j = JSON.stringify(v); s.push(j === undefined ? String(v) : j);
+                        }
+                        else { s.push(String(v)); }
+                    } catch (e) { s.push('[unserializable]'); }
                 }
                 return s.join(' ');
             };
@@ -41,6 +47,26 @@ struct WebViewContainer: UIViewRepresentable {
             window.addEventListener('unhandledrejection', function (e) {
                 try { window.webkit.messageHandlers.console.postMessage('error| Promise未处理: ' + fmt([e.reason])); } catch (ex) {}
             });
+            // 钩住 WebSocket 构造器，记录连接生命周期
+            var OrigWS = window.WebSocket;
+            window.WebSocket = function (url, protocols) {
+                console.log('[WS] 连接: ' + url);
+                var ws = protocols !== undefined ? new OrigWS(url, protocols) : new OrigWS(url);
+                ws.addEventListener('open', function () { console.log('[WS] 已连接: ' + url); });
+                ws.addEventListener('close', function (e) {
+                    var lvl = e.wasClean ? 'warn' : 'error';
+                    try { window.webkit.messageHandlers.console.postMessage(lvl + '| [WS] 关闭: ' + url + ' code=' + e.code + ' clean=' + e.wasClean + ' reason=' + (e.reason || '')); } catch (ex) {}
+                });
+                ws.addEventListener('error', function () {
+                    try { window.webkit.messageHandlers.console.postMessage('error| [WS] 错误: ' + url + ' readyState=' + ws.readyState + ' (0=连接中 1=已开 2=关闭中 3=已关)'); } catch (ex) {}
+                });
+                return ws;
+            };
+            window.WebSocket.prototype = OrigWS.prototype;
+            window.WebSocket.CONNECTING = OrigWS.CONNECTING;
+            window.WebSocket.OPEN = OrigWS.OPEN;
+            window.WebSocket.CLOSING = OrigWS.CLOSING;
+            window.WebSocket.CLOSED = OrigWS.CLOSED;
         })();
         """
         config.userContentController.addUserScript(
