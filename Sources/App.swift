@@ -40,7 +40,7 @@ struct ContentView: View {
                     }
                 }
                 .padding(.trailing, 10)
-                .padding(.top, 6)
+                .padding(.top, 56)   // 避开状态栏/刘海
             }
             .sheet(isPresented: $showDebug) {
                 DebugConsoleView(isPresented: $showDebug)
