@@ -54,7 +54,7 @@ for i, r in enumerate((60, 100)):
     d.arc([cx - r, cy + 60 - r // 2, cx + r, cy + 60 + r // 2], start=20, end=160, fill=(255, 255, 255, 200 - i * 60), width=10)
 
 # iOS 会自己裁圆角，但备一个圆角版本好看（AppIcon 用方图即可，这里输出方形）
-out_dir = r"E:\Android\app\cloudphone-ios\AppIcon.appiconset"
+out_dir = r"E:\Android\app\cloudphone-ios\Assets.xcassets/AppIcon.appiconset"
 os.makedirs(out_dir, exist_ok=True)
 img.resize((1024, 1024)).save(os.path.join(out_dir, "icon-1024.png"))
 img.convert("RGB").resize((512, 512)).save(os.path.join(out_dir, "icon-512.png"))
