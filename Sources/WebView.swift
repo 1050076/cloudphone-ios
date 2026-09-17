@@ -67,6 +67,38 @@ struct WebViewContainer: UIViewRepresentable {
             window.WebSocket.OPEN = OrigWS.OPEN;
             window.WebSocket.CLOSING = OrigWS.CLOSING;
             window.WebSocket.CLOSED = OrigWS.CLOSED;
+            // 兼容性自检：报告缺失的现代 API
+            var missing = [];
+            function chk(name, test) { try { if (!test()) missing.push(name); } catch (e) { missing.push(name + '(异常)'); } }
+            chk('structuredClone', function () { return typeof structuredClone === 'function'; });
+            chk('Array.prototype.at', function () { return typeof [].at === 'function'; });
+            chk('Array.prototype.findLast', function () { return typeof [].findLast === 'function'; });
+            chk('Object.hasOwn', function () { return typeof Object.hasOwn === 'function'; });
+            chk('String.replaceAll', function () { return typeof ''.replaceAll === 'function'; });
+            chk('Promise.allSettled', function () { return typeof Promise.allSettled === 'function'; });
+            chk('Promise.any', function () { return typeof Promise.any === 'function'; });
+            chk('Promise.withResolvers', function () { return typeof Promise.withResolvers === 'function'; });
+            chk('crypto.randomUUID', function () { return typeof crypto.randomUUID === 'function'; });
+            chk('ResizeObserver', function () { return typeof ResizeObserver === 'function'; });
+            chk('IntersectionObserver', function () { return typeof IntersectionObserver === 'function'; });
+            chk('requestIdleCallback', function () { return typeof requestIdleCallback === 'function'; });
+            chk('OffscreenCanvas', function () { return typeof OffscreenCanvas === 'function'; });
+            chk('WebCodecs.VideoEncoder', function () { return typeof VideoEncoder === 'function'; });
+            chk('MediaSource', function () { return typeof MediaSource === 'function' || typeof ManagedMediaSource === 'function'; });
+            chk('RTCPeerConnection', function () { return typeof RTCPeerConnection === 'function'; });
+            chk('BigInt', function () { return typeof BigInt === 'function'; });
+            chk('globalThis', function () { return typeof globalThis !== 'undefined'; });
+            chk('AbortController', function () { return typeof AbortController === 'function'; });
+            chk('WeakRef', function () { return typeof WeakRef === 'function'; });
+            try {
+                if (missing.length > 0) {
+                    window.webkit.messageHandlers.console.postMessage('error| [Compat] 缺少API: ' + missing.join(', '));
+                } else {
+                    window.webkit.messageHandlers.console.postMessage('log| [Compat] 全部API齐备');
+                }
+                var m = /Version\\/(\\d+[.\\d]*)[\\s\\S]*Safari/.exec(navigator.userAgent);
+                window.webkit.messageHandlers.console.postMessage('log| [Compat] WebKit版本: ' + (m ? m[1] : navigator.userAgent));
+            } catch (e) {}
         })();
         """
         config.userContentController.addUserScript(
