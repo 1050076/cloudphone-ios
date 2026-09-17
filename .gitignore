@@ -2,3 +2,5 @@ build/
 dist/
 *.xcodeproj
 cloudphone-*
+_local_tools/
+*.txt

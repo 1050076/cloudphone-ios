@@ -1,7 +1,0 @@
-polyfill: function
-====== admin 结构 ======
-typeof admin: object
-admin keys: _eventMap,sendInterface,adminSysApi,adminApi,router,pushHandler,tool
-admin.tool keys: userNickName,dictDataMap,deptInfoMap,roleInfoMap,admin,sysMenuLightList
-sendInterface keys: callId,call,sendTxtType,sendRTxtType,baseKey,remoteBaseKey,xorReady,onDataFun,onByteFun,onErr,onClose,conn
-20 次轮询无终态，最后: 
