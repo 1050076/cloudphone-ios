@@ -51,7 +51,7 @@ struct ContentView: View {
 // MARK: - 调试控制台（网页 console + JS 错误）
 struct DebugConsoleView: View {
     @Binding var isPresented: Bool
-    @State private var live: [String] = Coordinator.logs
+    @State private var live: [String] = WebViewContainer.Coordinator.logs
     @State private var autoScroll = true
 
     var body: some View {
@@ -80,7 +80,7 @@ struct DebugConsoleView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("清空") {
-                        Coordinator.logs.removeAll()
+                        WebViewContainer.Coordinator.logs.removeAll()
                         live = []
                     }
                 }
@@ -92,8 +92,8 @@ struct DebugConsoleView: View {
                 }
             }
         }
-        .onReceive(Coordinator.logPing) { _ in
-            live = Coordinator.logs
+        .onReceive(WebViewContainer.Coordinator.logPing) { _ in
+            live = WebViewContainer.Coordinator.logs
         }
     }
 }
