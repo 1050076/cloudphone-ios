@@ -1,5 +1,14 @@
 import SwiftUI
 import WebKit
+import Combine
+
+extension Date {
+    func HHmmss() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f.string(from: self)
+    }
+}
 
 // MARK: - WKWebView 壳
 struct WebViewContainer: UIViewRepresentable {
@@ -8,6 +17,35 @@ struct WebViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // 捕获页面 console 输出，转发到原生调试面板
+        let consoleHook = """
+        (function () {
+            var fmt = function (a) {
+                var s = [];
+                for (var i = 0; i < a.length; i++) {
+                    var v = a[i];
+                    try { s.push(typeof v === 'object' ? JSON.stringify(v) : String(v)); } catch (e) { s.push('[object]'); }
+                }
+                return s.join(' ');
+            };
+            ['log', 'warn', 'error', 'info'].forEach(function (level) {
+                var orig = console[level] ? console[level].bind(console) : function () {};
+                console[level] = function () {
+                    try { window.webkit.messageHandlers.console.postMessage(level + '| ' + fmt(arguments)); } catch (e) {}
+                    orig.apply(null, arguments);
+                };
+            });
+            window.addEventListener('error', function (e) {
+                try { window.webkit.messageHandlers.console.postMessage('error| JS错误: ' + e.message + ' @' + (e.filename || '') + ':' + e.lineno); } catch (ex) {}
+            });
+            window.addEventListener('unhandledrejection', function (e) {
+                try { window.webkit.messageHandlers.console.postMessage('error| Promise未处理: ' + fmt([e.reason])); } catch (ex) {}
+            });
+        })();
+        """
+        config.userContentController.addUserScript(
+            WKUserScript(source: consoleHook, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+        )
         // 禁止页面缩放：注入 viewport user-scalable=no（Vue SPA 自带的 meta 没写）
         let noZoomMeta = """
         (function () {
@@ -38,6 +76,7 @@ struct WebViewContainer: UIViewRepresentable {
         }
 
         let webView = WKWebView(frame: .zero, configuration: config)
+        config.userContentController.add(context.coordinator, name: "console")
         webView.customUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
@@ -70,11 +109,23 @@ struct WebViewContainer: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var parent: WebViewContainer
         weak var webView: WKWebView?
+        // 调试日志（最近 300 条），长按右上角 🐞 弹出
+        static var logs: [String] = []
+        static let logPing = PassthroughSubject<String, Never>()
 
         init(_ parent: WebViewContainer) { self.parent = parent }
+
+        func userContentController(_ userContentController: WKUserContentController,
+                                   didReceive message: WKScriptMessage) {
+            guard message.name == "console", let text = message.body as? String else { return }
+            let line = "\(Date().HHmmss()) \(text)"
+            Self.logs.append(line)
+            if Self.logs.count > 300 { Self.logs.removeFirst(Self.logs.count - 300) }
+            Self.logPing.send(line)
+        }
 
         // 新窗口/外链 → 交给系统 Safari
         func webView(_ webView: WKWebView,
