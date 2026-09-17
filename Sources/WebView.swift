@@ -112,10 +112,11 @@ struct WebViewContainer: UIViewRepresentable {
                 WKUserScript(source: polyfillSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
             )
         }
-        // 禁止页面缩放：注入 viewport user-scalable=no（Vue SPA 自带的 meta 没写）
+        // 禁止页面缩放：注入 viewport user-scalable=no；加 viewport-fit=cover + 安全区 padding，
+        // 防止页面顶栏（含返回键）被状态栏/刘海压住
         let noZoomMeta = """
         (function () {
-            var c = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            var c = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
             var m = document.querySelector('meta[name=viewport]');
             if (m) { m.setAttribute('content', c); }
             else { var n = document.createElement('meta'); n.name = 'viewport'; n.content = c; document.head.appendChild(n); }
@@ -126,6 +127,16 @@ struct WebViewContainer: UIViewRepresentable {
                 if (now - lastTouch <= 300) { e.preventDefault(); }
                 lastTouch = now;
             }, { passive: false });
+            // 注入安全区样式：顶栏在状态栏下、内容不被刘海压
+            var css = document.createElement('style');
+            css.textContent = [
+              'body { padding-top: env(safe-area-inset-top) !important; box-sizing: border-box; }',
+              'body { padding-bottom: env(safe-area-inset-bottom) !important; }',
+              // 固定在顶部的元素（页面自己的顶栏/返回栏）也要避开状态栏
+              'header, .header, nav, [class*="navbar"], [class*="topbar"], [class*="top-bar"] {',
+              '  padding-top: env(safe-area-inset-top) !important; }',
+            ].join('\\n');
+            document.head.appendChild(css);
         })();
         """
         config.userContentController.addUserScript(

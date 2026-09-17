@@ -17,11 +17,30 @@ struct CloudPhoneApp: App {
 struct ContentView: View {
     @State private var reloadToken = UUID()
     @State private var showDebug = false
+    // 定时检查 WebView 是否可以后退（驱动原生返回按钮显隐）
+    @State private var canGoBack = false
+    let backTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         WebViewContainer(startURL: kStartURL, reloadToken: reloadToken)
             .ignoresSafeArea()                       // 全屏：上下安全区都铺满
             .background(Color.black.ignoresSafeArea())
+            .overlay(alignment: .topLeading) {
+                // ⬅️ 原生返回按钮：网页顶栏被刘海压住时的逃生通道
+                if canGoBack {
+                    Button {
+                        WebViewContainer.Coordinator.currentWebView?.goBack()
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .padding(.leading, 12)
+                    .padding(.top, 58)
+                }
+            }
             .overlay(alignment: .topTrailing) {
                 HStack(spacing: 12) {
                     // 🐞 调试面板：长按 0.5s 弹出（用 emoji，避免 SF Symbols 版本差异不显示）
@@ -40,6 +59,9 @@ struct ContentView: View {
                 }
                 .padding(.trailing, 10)
                 .padding(.top, 56)   // 避开状态栏/刘海
+            }
+            .onReceive(backTimer) { _ in
+                canGoBack = WebViewContainer.Coordinator.currentWebView?.canGoBack ?? false
             }
             .sheet(isPresented: $showDebug) {
                 DebugConsoleView(isPresented: $showDebug)
