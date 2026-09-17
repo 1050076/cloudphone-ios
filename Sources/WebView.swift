@@ -8,6 +8,25 @@ struct WebViewContainer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        // 禁止页面缩放：注入 viewport user-scalable=no（Vue SPA 自带的 meta 没写）
+        let noZoomMeta = """
+        (function () {
+            var c = 'width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no';
+            var m = document.querySelector('meta[name=viewport]');
+            if (m) { m.setAttribute('content', c); }
+            else { var n = document.createElement('meta'); n.name = 'viewport'; n.content = c; document.head.appendChild(n); }
+            document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+            var lastTouch = 0;
+            document.addEventListener('touchend', function (e) {
+                var now = Date.now();
+                if (now - lastTouch <= 300) { e.preventDefault(); }
+                lastTouch = now;
+            }, { passive: false });
+        })();
+        """
+        config.userContentController.addUserScript(
+            WKUserScript(source: noZoomMeta, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+        )
         // 持久化 Cookie / localStorage，登录态不丢
         config.websiteDataStore = .default()
         // 云手机视频流一般走 WebRTC
@@ -26,6 +45,14 @@ struct WebViewContainer: UIViewRepresentable {
         webView.backgroundColor = .black
         webView.scrollView.bounces = false               // 禁下拉橡皮筋
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.minimumZoomScale = 1.0        // 钉死缩放
+        webView.scrollView.maximumZoomScale = 1.0
+        webView.scrollView.isScrollEnabled = false       // 页面自己管理滚动
+        // 双指/双击缩放手势关掉
+        webView.scrollView.pinchGestureRecognizer?.isEnabled = false
+        for g in webView.subviews.compactMap({ $0.gestureRecognizers }).flatMap({ $0 }) {
+            if g is UIPinchGestureRecognizer || g is UIDoubleTapGestureRecognizer { g.isEnabled = false }
+        }
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
         webView.load(URLRequest(url: startURL))
