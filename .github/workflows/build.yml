@@ -1,0 +1,41 @@
+name: build-ipa
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build archive (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project CloudPhone.xcodeproj \
+            -scheme CloudPhone \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/CloudPhone.xcarchive \
+            CODE_SIGN_IDENTITY="" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
+
+      - name: Package ipa (unsigned)
+        run: |
+          mkdir -p build/Payload
+          cp -r "build/CloudPhone.xcarchive/Products/Applications/CloudPhone.app" build/Payload/
+          cd build && zip -r CloudPhone-unsigned.ipa Payload
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CloudPhone-unsigned-ipa
+          path: build/CloudPhone-unsigned.ipa
