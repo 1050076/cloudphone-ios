@@ -104,6 +104,14 @@ struct WebViewContainer: UIViewRepresentable {
         config.userContentController.addUserScript(
             WKUserScript(source: consoleHook, injectionTime: .atDocumentStart, forMainFrameOnly: false)
         )
+        // gzip polyfill：iOS < 16.4 缺 CompressionStream/DecompressionStream，
+        // 目标站点的 WebSocket 层依赖它，缺失时验证码请求直接失败。
+        if let polyfillPath = Bundle.main.path(forResource: "gzip_polyfill", ofType: "js"),
+           let polyfillSource = try? String(contentsOfFile: polyfillPath, encoding: .utf8) {
+            config.userContentController.addUserScript(
+                WKUserScript(source: polyfillSource, injectionTime: .atDocumentStart, forMainFrameOnly: false)
+            )
+        }
         // 禁止页面缩放：注入 viewport user-scalable=no（Vue SPA 自带的 meta 没写）
         let noZoomMeta = """
         (function () {
