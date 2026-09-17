@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iOS 兼容性诊断 - oj8kclub</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, sans-serif; background: #0d1224; color: #e8eaf2; padding: 16px; font-size: 14px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .sub { color: #8b93b0; font-size: 12px; margin-bottom: 14px; }
+  .card { background: #171d33; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .card h2 { font-size: 14px; color: #9db4ff; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #232a45; gap: 8px; }
+  .row:last-child { border-bottom: none; }
+  .ok { color: #4ade80; }
+  .bad { color: #f87171; font-weight: 600; }
+  .warn { color: #fbbf24; }
+  button { background: #4a6cf7; color: #fff; border: none; border-radius: 10px; padding: 12px; font-size: 15px; width: 100%; margin-top: 4px; }
+  button:active { opacity: .7; }
+  #log { background: #0a0e1c; border-radius: 10px; padding: 10px; font-family: ui-monospace, monospace; font-size: 12px; max-height: 260px; overflow-y: auto; margin-top: 10px; word-break: break-all; }
+  #log div { padding: 2px 0; border-bottom: 1px solid #1a2036; }
+  .red { color: #f87171; } .grn { color: #4ade80; } .yel { color: #fbbf24; }
+  .copy { background: #2a3352; margin-top: 8px; padding: 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>iOS 兼容性诊断</h1>
+<div class="sub">oj8kclub cloudphone-web · 生成于壳调试</div>
+
+<div class="card">
+  <h2>环境</h2>
+  <div id="env"></div>
+</div>
+
+<div class="card">
+  <h2>JS API 支持（页面用到的关键项）</h2>
+  <div id="apis"></div>
+</div>
+
+<div class="card">
+  <h2>WebSocket 连接测试</h2>
+  <button onclick="testWS()">测试 wss://www.oj8kclub.com/ws</button>
+  <button class="copy" onclick="copyReport()">复制完整报告</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+const lines = [];
+function log(msg, cls) {
+  lines.push(msg);
+  const d = document.createElement('div');
+  d.textContent = msg;
+  if (cls) d.className = cls;
+  document.getElementById('log').appendChild(d);
+}
+function row(tbl, name, ok, note) {
+  const r = document.createElement('div');
+  r.className = 'row';
+  const n = document.createElement('span'); n.textContent = name;
+  const v = document.createElement('span');
+  v.innerHTML = ok ? '<span class="ok">✓ 支持</span>' : '<span class="bad">✗ 缺失</span>' + (note ? ' <span class="warn">' + note + '</span>' : '');
+  r.appendChild(n); r.appendChild(v);
+  tbl.appendChild(r);
+}
+
+// 环境
+(function () {
+  const e = document.getElementById('env');
+  const ua = navigator.userAgent;
+  let ver = '?';
+  const m = /Version\/(\d+[\d.]*)[\s\S]*Safari/.exec(ua);
+  if (m) ver = m[1];
+  const rows = [
+    ['WebKit/Safari 版本', ver],
+    ['平台', /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : '其他'],
+    ['iOS 系统版本(近似)', ver + '（WebKit 版本≈iOS 版本）'],
+    ['UA', ua],
+  ];
+  rows.forEach(([k, v]) => {
+    const r = document.createElement('div'); r.className = 'row';
+    const a = document.createElement('span'); a.textContent = k;
+    const b = document.createElement('span'); b.textContent = v; b.style.textAlign = 'right'; b.style.maxWidth = '60%'; b.style.wordBreak = 'break-all';
+    r.appendChild(a); r.appendChild(b); e.appendChild(r);
+  });
+})();
+
+// API 检查
+(function () {
+  const t = document.getElementById('apis');
+  const checks = [
+    ['structuredClone (Safari 15.4+)', () => typeof structuredClone === 'function'],
+    ['Array.prototype.at (15.4+)', () => typeof [].at === 'function'],
+    ['Array.prototype.findLast (15.4+)', () => typeof [].findLast === 'function'],
+    ['Object.hasOwn (15.4+)', () => typeof Object.hasOwn === 'function'],
+    ['String.replaceAll (13.4+)', () => typeof ''.replaceAll === 'function'],
+    ['Promise.allSettled (13+)', () => typeof Promise.allSettled === 'function'],
+    ['Promise.any (15+)', () => typeof Promise.any === 'function'],
+    ['Promise.withResolvers (17.4+)', () => typeof Promise.withResolvers === 'function'],
+    ['crypto.randomUUID (15.4+)', () => typeof crypto.randomUUID === 'function'],
+    ['ResizeObserver (13.4+)', () => typeof ResizeObserver === 'function'],
+    ['IntersectionObserver (12.2+)', () => typeof IntersectionObserver === 'function'],
+    ['requestIdleCallback (16.4+)', () => typeof requestIdleCallback === 'function'],
+    ['OffscreenCanvas (16.4+)', () => typeof OffscreenCanvas === 'function'],
+    ['WebCodecs VideoEncoder (16.4+)', () => typeof VideoEncoder === 'function'],
+    ['ManagedMediaSource (17.1+)', () => typeof ManagedMediaSource === 'function'],
+    ['RTCPeerConnection', () => typeof RTCPeerConnection === 'function'],
+    ['BigInt (14+)', () => typeof BigInt === 'function'],
+    ['AbortController (12.2+)', () => typeof AbortController === 'function'],
+    ['Optional chaining ?.', () => { try { return eval('({})?.a !== undefined || true'); } catch (e) { return false; } }],
+    ['?? 运算符 (13.4+)', () => { try { return eval('(null ?? true) === true'); } catch (e) { return false; } }],
+  ];
+  const missing = [];
+  checks.forEach(([name, fn]) => {
+    let ok = false, note = '';
+    try { ok = fn(); } catch (e) { note = '检查异常'; }
+    if (!ok) missing.push(name);
+    row(t, name, ok, note);
+  });
+  log(missing.length ? '[结果] 缺失 ' + missing.length + ' 项: ' + missing.join('; ') : '[结果] 全部支持', missing.length ? 'red' : 'grn');
+  window.__missing = missing;
+})();
+
+// WebSocket 测试
+let wsResult = null;
+function testWS() {
+  log('[WS] 开始连接 wss://www.oj8kclub.com/ws ...', 'yel');
+  let ws;
+  try { ws = new WebSocket('wss://www.oj8kclub.com/ws'); }
+  catch (e) { log('[WS] 构造异常: ' + e.message, 'red'); wsResult = '构造异常: ' + e.message; return; }
+  const t0 = Date.now();
+  const timer = setTimeout(() => {
+    if (wsResult === null) { wsResult = '超时(8秒无响应) readyState=' + ws.readyState; log('[WS] ' + wsResult, 'red'); }
+  }, 8000);
+  ws.onopen = () => { clearTimeout(timer); wsResult = '连接成功 (' + (Date.now() - t0) + 'ms)'; log('[WS] ✓ ' + wsResult, 'grn'); setTimeout(() => ws.close(), 1500); };
+  ws.onclose = (e) => { clearTimeout(timer); if (wsResult === null) { wsResult = '关闭 code=' + e.code + ' wasClean=' + e.wasClean + ' reason=' + (e.reason || '无'); log('[WS] ✗ ' + wsResult, 'red'); } };
+  ws.onerror = () => { log('[WS] onerror readyState=' + ws.readyState + ' (0=连接中 1=已开 2=关闭中 3=已关)', 'red'); };
+}
+
+// 复制报告
+function copyReport() {
+  const ua = navigator.userAgent;
+  const m = /Version\/(\d+[\d.]*)[\s\S]*Safari/.exec(ua);
+  const report =
+    'WebKit版本: ' + (m ? m[1] : '?') + '\n' +
+    'UA: ' + ua + '\n' +
+    '缺失API: ' + (window.__missing && window.__missing.length ? window.__missing.join('; ') : '无') + '\n' +
+    'WS测试: ' + (wsResult || '未测试');
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(report).then(() => log('[报告] 已复制到剪贴板', 'grn'), () => showReport(report));
+  } else { showReport(report); }
+}
+function showReport(report) {
+  const p = document.createElement('textarea');
+  p.value = report; p.style.width = '100%'; p.style.height = '120px'; p.style.marginTop = '8px';
+  document.body.appendChild(p); p.select();
+  log('[报告] 请手动长按全选复制', 'yel');
+}
+</script>
+</body>
+</html>
