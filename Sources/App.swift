@@ -23,11 +23,10 @@ struct ContentView: View {
             .ignoresSafeArea()                       // 全屏：上下安全区都铺满
             .background(Color.black.ignoresSafeArea())
             .overlay(alignment: .topTrailing) {
-                HStack(spacing: 10) {
-                    // 🐞 调试面板：长按 0.5s 弹出
-                    Image(systemName: "ladybug.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.yellow)
+                HStack(spacing: 12) {
+                    // 🐞 调试面板：长按 0.5s 弹出（用 emoji，避免 SF Symbols 版本差异不显示）
+                    Text("🐞")
+                        .font(.system(size: 24))
                         .onLongPressGesture(minimumDuration: 0.5) { showDebug = true }
                     // 轻量刷新按钮
                     Button {
