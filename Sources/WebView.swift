@@ -125,6 +125,7 @@ struct WebViewContainer: UIViewRepresentable {
         }
         webView.allowsBackForwardNavigationGestures = true
         context.coordinator.webView = webView
+        Coordinator.currentWebView = webView
         webView.load(URLRequest(url: startURL))
         return webView
     }
@@ -141,6 +142,7 @@ struct WebViewContainer: UIViewRepresentable {
         // 调试日志（最近 300 条），长按右上角 🐞 弹出
         static var logs: [String] = []
         static let logPing = PassthroughSubject<String, Never>()
+        weak static var currentWebView: WKWebView?
 
         init(_ parent: WebViewContainer) { self.parent = parent }
 

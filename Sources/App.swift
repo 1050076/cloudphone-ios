@@ -101,7 +101,7 @@ struct DebugConsoleView: View {
                           } catch (e) { console.log('error| [WS测试] 异常: ' + e.message); }
                         })();
                         """
-                        webView?.evaluateJavaScript(js)
+                        WebViewContainer.Coordinator.currentWebView?.evaluateJavaScript(js)
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
