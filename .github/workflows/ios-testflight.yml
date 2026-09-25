@@ -45,7 +45,10 @@ concurrency:
 jobs:
   testflight:
     name: Sign, upload and distribute
-    runs-on: macos-15
+    # iOS 26 SDK is mandatory for App Store Connect uploads (Apple rejects
+    # builds made with an older SDK with a 409 "SDK version issue"), and that
+    # SDK only ships in Xcode 26 -- so this job cannot run on macos-15.
+    runs-on: macos-26
     timeout-minutes: 60
     env:
       IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
@@ -79,6 +82,15 @@ jobs:
 
       - name: Install XcodeGen
         run: brew install xcodegen
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          xcode_path="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' | sort -V | tail -1)"
+          test -n "$xcode_path"
+          echo "DEVELOPER_DIR=$xcode_path/Contents/Developer" >> "$GITHUB_ENV"
+          echo "▸ $(basename "$xcode_path")"
+          xcodebuild -version
 
       - name: Prepare App Store Connect credential
         env:
@@ -243,11 +255,13 @@ jobs:
           set -euo pipefail
           : "${APP_STORE_ID:?set repository variable IOS_APP_STORE_ID to the App Store Connect app id}"
           key_directory="$(dirname "$ASC_KEY_PATH")"
-          # altool's flag spelling changed between Xcode versions: Xcode 26
-          # accepts --upload-package/--api-key (hyphenated), Xcode 16.4 only the
-          # documented --upload-app/--apiKey pair -- and it reports the form it
-          # cannot parse as a missing-credentials error, which reads like a bad
-          # key. Try the documented pair first, keep the other as a fallback.
+          # The documented --upload-app/--apiKey pair is tried first because it
+          # authenticates on every Xcode we have seen (Xcode 16.4 reaches Apple
+          # validation with it). altool may print "option '-' is unknown:
+          # ignored" a few times -- that line is noise, not the failure: read the
+          # product-errors block that follows it. The hyphenated
+          # --upload-package/--api-key form is the one known to work on Xcode 26,
+          # kept as a fallback.
           if API_PRIVATE_KEYS_DIR="$key_directory" \
             xcrun altool --upload-app --type ios --file "$UPLOADED_IPA" \
               --apiKey "$ASC_KEY_ID" \
