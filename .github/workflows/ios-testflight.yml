@@ -242,12 +242,28 @@ jobs:
         run: |
           set -euo pipefail
           : "${APP_STORE_ID:?set repository variable IOS_APP_STORE_ID to the App Store Connect app id}"
-          API_PRIVATE_KEYS_DIR="$(dirname "$ASC_KEY_PATH")" \
-            xcrun altool --upload-package "$UPLOADED_IPA" \
-              --api-key "$ASC_KEY_ID" \
-              --api-issuer "$ASC_ISSUER_ID" \
-              --wait \
-              --output-format json
+          key_directory="$(dirname "$ASC_KEY_PATH")"
+          # altool's flag spelling changed between Xcode versions: Xcode 26
+          # accepts --upload-package/--api-key (hyphenated), Xcode 16.4 only the
+          # documented --upload-app/--apiKey pair -- and it reports the form it
+          # cannot parse as a missing-credentials error, which reads like a bad
+          # key. Try the documented pair first, keep the other as a fallback.
+          if API_PRIVATE_KEYS_DIR="$key_directory" \
+            xcrun altool --upload-app --type ios --file "$UPLOADED_IPA" \
+              --apiKey "$ASC_KEY_ID" \
+              --apiIssuer "$ASC_ISSUER_ID" \
+              --output-format json; then
+            echo "✓ uploaded with --upload-app/--apiKey"
+          else
+            echo "::warning::altool --upload-app/--apiKey failed; retrying with --upload-package/--api-key"
+            API_PRIVATE_KEYS_DIR="$key_directory" \
+              xcrun altool --upload-package "$UPLOADED_IPA" \
+                --api-key "$ASC_KEY_ID" \
+                --api-issuer "$ASC_ISSUER_ID" \
+                --wait \
+                --output-format json
+            echo "✓ uploaded with --upload-package/--api-key"
+          fi
 
       - name: Distribute to the TestFlight internal group
         if: ${{ github.event.inputs.skip_upload != 'true' }}
