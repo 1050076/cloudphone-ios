@@ -1,0 +1,6 @@
+# Shell/Ruby/Python scripts are executed on macOS runners: never let Windows
+# check-outs rewrite them to CRLF, or the runner dies on `\r: command not found`.
+*.sh text eol=lf
+*.rb text eol=lf
+*.py text eol=lf
+*.yml text eol=lf

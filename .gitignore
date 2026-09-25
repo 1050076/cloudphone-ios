@@ -4,3 +4,4 @@ dist/
 cloudphone-*
 _local_tools/
 *.txt
+scripts/__pycache__/

@@ -1,0 +1,287 @@
+name: ios-testflight
+
+# Signed iOS build -> App Store Connect -> TestFlight (internal testers).
+#
+# Signing is manual on purpose. xcodebuild's automatic signing fails on a CI
+# runner ("Authentication failed: Make sure a bearer token was provided" from
+# GatherProvisioningInputs) even though the very same App Store Connect API key
+# manages certificates and profiles over REST, so the certificate and the App
+# Store profile are created ahead of time by
+# scripts/make-ios-signing-assets.py and live in repository secrets.
+#
+# Repository variables (identifiers -- not secret):
+#   IOS_TEAM_ID                10-character Apple team id            [required]
+#   IOS_BUNDLE_ID              bundle id of the ASC app record       [required]
+#   IOS_PROFILE_APP            name of its App Store profile         [required]
+#   IOS_APP_STORE_ID           numeric App Store Connect app id      [required
+#                              for uploads; the workflow can still be dispatched
+#                              with skip_upload to validate signing]
+#   TESTFLIGHT_INTERNAL_GROUP  defaults to 'Internal'
+#
+# Repository secrets:
+#   APP_STORE_CONNECT_KEY_ID / APP_STORE_CONNECT_ISSUER_ID /
+#   APP_STORE_CONNECT_PRIVATE_KEY   App Store Connect API key (.p8 contents)
+#   IOS_SIGNING_CERTIFICATE_P12 (base64) / IOS_SIGNING_CERTIFICATE_PASSWORD
+#   IOS_PROVISIONING_PROFILE_APP    App Store profile (base64 .mobileprovision)
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_upload:
+        description: 'Sign and archive only; do not upload to App Store Connect'
+        type: boolean
+        default: false
+  push:
+    branches:
+      - 'release-ios**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudphone-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  testflight:
+    name: Sign, upload and distribute
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      IOS_TEAM_ID: ${{ vars.IOS_TEAM_ID }}
+      IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+      IOS_PROFILE_APP: ${{ vars.IOS_PROFILE_APP }}
+      APP_STORE_ID: ${{ vars.IOS_APP_STORE_ID }}
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          # Build numbers are the Git commit height, so the full history is needed.
+          fetch-depth: 0
+
+      - name: Require identifier configuration
+        run: |
+          set -euo pipefail
+          missing=""
+          [ -n "${IOS_TEAM_ID:-}" ] || missing="$missing repository variable IOS_TEAM_ID;"
+          [ -n "${IOS_BUNDLE_ID:-}" ] || missing="$missing repository variable IOS_BUNDLE_ID;"
+          [ -n "${IOS_PROFILE_APP:-}" ] || missing="$missing repository variable IOS_PROFILE_APP;"
+          [ -n "${ASC_KEY_ID:-}" ] || missing="$missing secret APP_STORE_CONNECT_KEY_ID;"
+          [ -n "${ASC_ISSUER_ID:-}" ] || missing="$missing secret APP_STORE_CONNECT_ISSUER_ID;"
+          if [ -n "$missing" ]; then
+            printf '::error::missing configuration:%s\n' "$missing"
+            exit 1
+          fi
+          echo "▸ team=$IOS_TEAM_ID bundle=$IOS_BUNDLE_ID profile=$IOS_PROFILE_APP app_store_id=${APP_STORE_ID:-<unset>}"
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Prepare App Store Connect credential
+        env:
+          PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          : "${PRIVATE_KEY:?missing APP_STORE_CONNECT_PRIVATE_KEY}"
+          key_directory="$RUNNER_TEMP/app-store-connect"
+          key_path="$key_directory/AuthKey_${ASC_KEY_ID}.p8"
+          mkdir -p "$key_directory"
+          chmod 700 "$key_directory"
+          umask 077
+          printf '%s' "$PRIVATE_KEY" > "$key_path"
+          openssl pkey -in "$key_path" -noout -check >/dev/null
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Import distribution certificate
+        env:
+          SIGNING_CERTIFICATE_P12: ${{ secrets.IOS_SIGNING_CERTIFICATE_P12 }}
+          SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.IOS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${SIGNING_CERTIFICATE_P12:?missing IOS_SIGNING_CERTIFICATE_P12}"
+          : "${SIGNING_CERTIFICATE_PASSWORD:?missing IOS_SIGNING_CERTIFICATE_PASSWORD}"
+          signing_keychain="$RUNNER_TEMP/cloudphone-signing.keychain-db"
+          signing_p12="$RUNNER_TEMP/cloudphone-signing.p12"
+          keychain_password="$(openssl rand -hex 32)"
+          printf '%s' "$SIGNING_CERTIFICATE_P12" | base64 --decode > "$signing_p12"
+          security create-keychain -p "$keychain_password" "$signing_keychain"
+          security set-keychain-settings -lut 21600 "$signing_keychain"
+          security unlock-keychain -p "$keychain_password" "$signing_keychain"
+          security import "$signing_p12" \
+            -k "$signing_keychain" \
+            -P "$SIGNING_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$keychain_password" \
+            "$signing_keychain" >/dev/null
+          security list-keychains -d user -s "$signing_keychain"
+          security find-identity -v -p codesigning "$signing_keychain"
+          security find-identity -v -p codesigning "$signing_keychain" | grep -q 'valid identities found'
+          {
+            echo "CI_SIGNING_KEYCHAIN=$signing_keychain"
+            echo "CI_SIGNING_P12=$signing_p12"
+          } >> "$GITHUB_ENV"
+
+      - name: Install provisioning profile
+        env:
+          PROFILE_APP: ${{ secrets.IOS_PROVISIONING_PROFILE_APP }}
+        run: |
+          set -euo pipefail
+          : "${PROFILE_APP:?missing IOS_PROVISIONING_PROFILE_APP}"
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profile_dir"
+          target="$RUNNER_TEMP/cloudphone.mobileprovision"
+          printf '%s' "$PROFILE_APP" | base64 --decode > "$target"
+          uuid="$(security cms -D -i "$target" | plutil -extract UUID raw -)"
+          name="$(security cms -D -i "$target" | plutil -extract Name raw -)"
+          bundle="$(security cms -D -i "$target" | plutil -extract Entitlements.application-identifier raw -)"
+          beta="$(security cms -D -i "$target" | plutil -extract Entitlements.beta-reports-active raw - 2>/dev/null || echo false)"
+          cp "$target" "$profile_dir/$uuid.mobileprovision"
+          echo "▸ profile: $name ($uuid) for $bundle, beta-reports-active=$beta"
+          [ "$name" = "$IOS_PROFILE_APP" ] || { echo "::error::profile name '$name' does not match IOS_PROFILE_APP '$IOS_PROFILE_APP'"; exit 1; }
+          case "$bundle" in
+            *".$IOS_BUNDLE_ID") ;;
+            *) echo "::error::profile is for '$bundle', expected '*.$IOS_BUNDLE_ID'"; exit 1 ;;
+          esac
+          [ "$beta" = "true" ] || { echo "::error::profile lacks beta-reports-active; TestFlight uploads will be refused"; exit 1; }
+
+      - name: Verify App Store icon has no alpha channel
+        run: |
+          set -euo pipefail
+          # An alpha channel in the 1024px icon is rejected at upload time
+          # (ITMS-90717), long after the build looks green.
+          icon="Assets.xcassets/AppIcon.appiconset/icon-1024.png"
+          alpha="$(sips -g hasAlpha "$icon" | awk '/hasAlpha/ { print $2 }')"
+          pixel_size="$(sips -g pixelWidth -g pixelHeight "$icon" | awk '/pixel/ { print $2 }' | paste -sd x -)"
+          echo "▸ $icon $pixel_size hasAlpha=$alpha"
+          [ "$alpha" = "no" ] || { echo "::error::$icon has an alpha channel (ITMS-90717)"; exit 1; }
+          [ "$pixel_size" = "1024x1024" ] || { echo "::error::$icon is $pixel_size, expected 1024x1024"; exit 1; }
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Archive iOS app
+        run: |
+          set -euo pipefail
+          build_number="$(sh scripts/apple_ci_build_number.sh "$GITHUB_SHA")"
+          marketing_version="$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*//p' project.yml | tr -d '"' | head -1)"
+          test -n "$marketing_version"
+          echo "▸ marketing version $marketing_version, build $build_number"
+          archive_path="$RUNNER_TEMP/CloudPhone.xcarchive"
+          xcodebuild archive \
+            -project CloudPhone.xcodeproj \
+            -scheme CloudPhone \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$archive_path" \
+            -derivedDataPath "$RUNNER_TEMP/CloudPhoneDerivedData" \
+            MARKETING_VERSION="$marketing_version" \
+            CURRENT_PROJECT_VERSION="$build_number" \
+            PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_APP"
+
+          app="$archive_path/Products/Applications/CloudPhone.app"
+          # Prove the identity reached the signature here instead of at upload.
+          signed_team="$(/usr/bin/codesign -dv --verbose=4 "$app" 2>&1 | awk -F= '/^TeamIdentifier=/ { print $2 }')"
+          if [ "$signed_team" != "$IOS_TEAM_ID" ]; then
+            echo "::error::archive is signed by '${signed_team:-nothing}', expected $IOS_TEAM_ID"
+            exit 1
+          fi
+          actual_bundle="$(plutil -extract CFBundleIdentifier raw "$app/Info.plist")"
+          actual_version="$(plutil -extract CFBundleShortVersionString raw "$app/Info.plist")"
+          actual_build="$(plutil -extract CFBundleVersion raw "$app/Info.plist")"
+          test "$actual_bundle" = "$IOS_BUNDLE_ID" || { echo "::error::bundle id is $actual_bundle"; exit 1; }
+          test "$actual_version" = "$marketing_version" || { echo "::error::marketing version is $actual_version"; exit 1; }
+          test "$actual_build" = "$build_number" || { echo "::error::build number is $actual_build"; exit 1; }
+          test -f "$app/embedded.mobileprovision" || { echo "::error::archive has no embedded provisioning profile"; exit 1; }
+          echo "✓ signed by team $signed_team: $actual_bundle $actual_version ($actual_build)"
+          {
+            echo "ARCHIVE_PATH=$archive_path"
+            echo "MARKETING_VERSION=$marketing_version"
+            echo "CI_BUILD_NUMBER=$build_number"
+          } >> "$GITHUB_ENV"
+
+      - name: Export signed IPA
+        run: |
+          set -euo pipefail
+          export_options="$RUNNER_TEMP/ExportOptions.plist"
+          upload_path="$RUNNER_TEMP/iOSUpload"
+          plutil -create xml1 "$export_options"
+          plutil -insert method -string app-store-connect "$export_options"
+          plutil -insert destination -string export "$export_options"
+          plutil -insert signingStyle -string manual "$export_options"
+          plutil -insert teamID -string "$IOS_TEAM_ID" "$export_options"
+          plutil -insert provisioningProfiles -json \
+            "{\"$IOS_BUNDLE_ID\":\"$IOS_PROFILE_APP\"}" \
+            "$export_options"
+          plutil -insert manageAppVersionAndBuildNumber -bool NO "$export_options"
+          plutil -insert stripSwiftSymbols -bool YES "$export_options"
+          plutil -insert uploadSymbols -bool YES "$export_options"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$upload_path" \
+            -exportOptionsPlist "$export_options"
+
+          ipa_count="$(find "$upload_path" -maxdepth 1 -type f -name '*.ipa' -print | wc -l | tr -d ' ')"
+          test "$ipa_count" -eq 1
+          ipa="$(find "$upload_path" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          echo "UPLOADED_IPA=$ipa" >> "$GITHUB_ENV"
+          echo "✓ exported $(basename "$ipa")"
+
+      - name: Upload IPA to App Store Connect
+        if: ${{ github.event.inputs.skip_upload != 'true' }}
+        run: |
+          set -euo pipefail
+          : "${APP_STORE_ID:?set repository variable IOS_APP_STORE_ID to the App Store Connect app id}"
+          API_PRIVATE_KEYS_DIR="$(dirname "$ASC_KEY_PATH")" \
+            xcrun altool --upload-package "$UPLOADED_IPA" \
+              --api-key "$ASC_KEY_ID" \
+              --api-issuer "$ASC_ISSUER_ID" \
+              --wait \
+              --output-format json
+
+      - name: Distribute to the TestFlight internal group
+        if: ${{ github.event.inputs.skip_upload != 'true' }}
+        env:
+          TESTFLIGHT_INTERNAL_GROUP: ${{ vars.TESTFLIGHT_INTERNAL_GROUP || 'Internal' }}
+        run: |
+          set -euo pipefail
+          # Internal testers need no Beta App Review; no external group is
+          # requested here, so the distributor never submits for review.
+          ruby scripts/distribute_testflight_groups.rb \
+            --key-id "$ASC_KEY_ID" \
+            --issuer-id "$ASC_ISSUER_ID" \
+            --key-path "$ASC_KEY_PATH" \
+            --app-id "$APP_STORE_ID" \
+            --build-number "$CI_BUILD_NUMBER" \
+            --marketing-version "$MARKETING_VERSION" \
+            --platform IOS \
+            --internal-group "$TESTFLIGHT_INTERNAL_GROUP" \
+            --external-group ""
+
+      - name: Retain signed IPA
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-signed-ipa
+          path: ${{ runner.temp }}/iOSUpload/*.ipa
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Remove temporary credentials
+        if: always()
+        run: |
+          set -euo pipefail
+          [ -n "${ASC_KEY_PATH:-}" ] && rm -f "$ASC_KEY_PATH" || true
+          [ -n "${CI_SIGNING_KEYCHAIN:-}" ] && security delete-keychain "$CI_SIGNING_KEYCHAIN" || true
+          [ -n "${CI_SIGNING_P12:-}" ] && rm -f "$CI_SIGNING_P12" || true
+          rm -rf scripts/__pycache__
+          exit 0
